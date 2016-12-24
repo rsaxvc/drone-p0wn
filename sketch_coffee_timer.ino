@@ -13,6 +13,23 @@
 #error("Height incorrect, please fix Adafruit_SSD1306.h!");
 #endif
 
+/*WiFi NETWORK CONFIGURATION*/
+static const struct
+/*These are APs with hardcoded credentials. AP names must be unique*/
+  {
+  const char * access_point;
+  const char * preshared_key;
+  } wifi_credential_list[] = {
+    {"b.wifi.rsaxvc.net","HaHaNotPuttingMyPasswordOnGithub"}
+  };
+static const size_t wifi_credential_list_len = sizeof( wifi_credential_list ) / sizeof( wifi_credential_list[0] );
+static const char * const wifi_skip_list[]=
+/*These never work, so don't bother with them*/
+  {
+   "xfinitywifi"
+  };
+static const size_t wifi_skip_list_len = sizeof(wifi_skip_list)/sizeof(wifi_skip_list[0]);
+
 /*GLOBAL CONSTANTS*/
 static const unsigned long chicago_offset = 6 * 60 * 60;
 static const int NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of the message
@@ -118,25 +135,48 @@ static unsigned long get_ntp_time() {
   int n = WiFi.scanNetworks();
   for (int i = 0; i < n; ++i)
   {
-    if( WiFi.SSID(i) == "b.wifi.rsaxvc.net" )
-    {
-      Serial.print("Connecting to ");
-      Serial.print(WiFi.SSID(i));
-      WiFi.begin(WiFi.SSID(i).c_str(), "HaHaNotPuttingMyPasswordOnGithub");
-    }
-    else if( WiFi.encryptionType(i) != ENC_TYPE_NONE || WiFi.SSID(i) == "xfinitywifi" )
+    int j;
+
+    /*Check if AP in blacklist*/
+    for( j = 0; j < wifi_skip_list_len; ++j )
+      {
+      if( WiFi.SSID(i) == wifi_skip_list[j] )break;
+      }
+    if( j != wifi_skip_list_len )
+      {
+      Serial.print("Skipping ");
+      Serial.println(WiFi.SSID(i));
+      continue;
+      }
+
+    const char * preshared_key = NULL;
+
+    /*Check if AP in Whitelist*/
+    for( j = 0; j < wifi_credential_list_len; ++j )
+      {
+      if( WiFi.SSID(i) == wifi_credential_list[j].access_point )
+        {
+        Serial.print("Retrieving Creds for ");
+        Serial.println(WiFi.SSID(i));
+        preshared_key = wifi_credential_list[j].preshared_key;
+        break;
+        }
+      }
+
+
+    /*If we dont have a PSK skip non-open APs*/
+    if( WiFi.encryptionType(i) != ENC_TYPE_NONE && preshared_key == NULL )
     {
       Serial.print("Skipping ");
       Serial.println(WiFi.SSID(i));
       continue;
     }
-    else
-    {
-      // We start by connecting to a WiFi network
-      Serial.print("Connecting to ");
-      Serial.print(WiFi.SSID(i));
-      WiFi.begin(WiFi.SSID(i).c_str(),"");
-    }
+    if( !preshared_key ) preshared_key = "";
+
+    // We start by connecting to a WiFi network
+    Serial.print("Connecting to ");
+    Serial.print(WiFi.SSID(i));
+    WiFi.begin(WiFi.SSID(i).c_str(), preshared_key );
 
     Serial.print("..");
     wl_status_t stat = WiFi.status();
@@ -193,8 +233,6 @@ static unsigned long get_ntp_time() {
     }
     WiFi.disconnect();
     if( epoch ) return epoch;
-
-    WiFi.disconnect();
   }
 return 0;
 }
