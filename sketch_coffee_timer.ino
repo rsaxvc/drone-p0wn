@@ -26,7 +26,7 @@ static byte packetBuffer[ NTP_PACKET_SIZE]; //buffer to hold incoming and outgoi
 static Adafruit_SSD1306 display;
 
 void setup() {
-  Serial.begin(74880);
+  Serial.begin(74880); //This is because the ESP8266 bootloader runs at this baud, and because I'm lazy
   // Set WiFi to station mode and disconnect from an AP if it was previously connected
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
@@ -87,23 +87,30 @@ static void println_tm(unsigned long epoch)
 // recv an NTP request from the time server
 static unsigned long recvNTPpacket(WiFiUDP & udp )
 {
-  // We've received a packet, read the data from it
-  udp.read(packetBuffer, NTP_PACKET_SIZE); // read the packet into the buffer
-  
-  //the timestamp starts at byte 40 of the received packet and is four bytes,
-  // or two words, long. First, extract the two words:
-  
-  unsigned long highWord = word(packetBuffer[40], packetBuffer[41]);
-  unsigned long lowWord = word(packetBuffer[42], packetBuffer[43]);
-  // combine the four bytes (two words) into a long integer
-  // this is NTP time (seconds since Jan 1 1900):
-  unsigned long secsSince1900 = highWord << 16 | lowWord;
-  // now convert NTP time into everyday time:
-  return secsSince1900;
-  // Unix time starts on Jan 1 1970. In seconds, that's 2208988800:
-  const unsigned long seventyYears = 2208988800UL;
-  unsigned long epoch = secsSince1900 - seventyYears;
-  return epoch;
+  int packet_size = udp.parsePacket();
+  if( packet_size )
+    {
+    Serial.print("packet received, length=");
+    Serial.println(packet_size);
+    // We've received a packet, read the data from it
+    udp.read(packetBuffer, NTP_PACKET_SIZE); // read the packet into the buffer
+    
+    //the timestamp starts at byte 40 of the received packet and is four bytes,
+    // or two words, long. First, extract the two words:
+    
+    unsigned long highWord = word(packetBuffer[40], packetBuffer[41]);
+    unsigned long lowWord = word(packetBuffer[42], packetBuffer[43]);
+    // combine the four bytes (two words) into a long integer
+    // this is NTP time (seconds since Jan 1 1900):
+    unsigned long secsSince1900 = highWord << 16 | lowWord;
+    // now convert NTP time into everyday time:
+    return secsSince1900;
+    // Unix time starts on Jan 1 1970. In seconds, that's 2208988800:
+    const unsigned long seventyYears = 2208988800UL;
+    unsigned long epoch = secsSince1900 - seventyYears;
+    return epoch;
+    }
+  return 0;
 }
 
 static unsigned long get_ntp_time() {
@@ -177,23 +184,15 @@ static unsigned long get_ntp_time() {
     udp.begin(localPort);
     Serial.println(udp.localPort());
 
-    sendNTPpacket(udp, timeServerIP); // send an NTP packet to a time server
-    // wait to see if a reply is available
-
-    unsigned start_stopwatch = millis();
-    while( (millis()-start_stopwatch) < 5000 )
-      {
-      delay(200);
-      int packet_size = udp.parsePacket();
-      if( packet_size )
-        {
-        Serial.print("packet received, length=");
-        Serial.println(packet_size);
-        unsigned long epoch = recvNTPpacket(udp);
-        WiFi.disconnect();
-        return epoch;
-        }
-      }
+    unsigned long epoch = 0;
+    for( i = 0; i < 5 && !epoch; ++i )
+    {
+      sendNTPpacket(udp, timeServerIP); // send an NTP packet to a time server
+      delay(200);    // wait to see if a reply is available
+      epoch = recvNTPpacket(udp);
+    }
+    WiFi.disconnect();
+    if( epoch ) return epoch;
 
     WiFi.disconnect();
   }
