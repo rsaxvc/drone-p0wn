@@ -136,20 +136,8 @@ static unsigned long get_ntp_time() {
   for (int i = 0; i < n; ++i)
   {
     int j;
-
-    /*Check if AP in blacklist*/
-    for( j = 0; j < wifi_skip_list_len; ++j )
-      {
-      if( WiFi.SSID(i) == wifi_skip_list[j] )break;
-      }
-    if( j != wifi_skip_list_len )
-      {
-      Serial.print("Skipping ");
-      Serial.println(WiFi.SSID(i));
-      continue;
-      }
-
-    const char * preshared_key = NULL;
+    static const char * const no_preshared_key_found = "";
+    const char * preshared_key = no_preshared_key_found;
 
     /*Check if AP in Whitelist*/
     for( j = 0; j < wifi_credential_list_len; ++j )
@@ -163,15 +151,25 @@ static unsigned long get_ntp_time() {
         }
       }
 
+    /*Check if AP in blacklist*/
+    for( j = 0; j < wifi_skip_list_len; ++j )
+      {
+      if( WiFi.SSID(i) == wifi_skip_list[j] )break;
+      }
+    if( j != wifi_skip_list_len )
+      {
+      Serial.print("Skipping ");
+      Serial.println(WiFi.SSID(i));
+      continue;
+      }
 
-    /*If we dont have a PSK skip non-open APs*/
-    if( WiFi.encryptionType(i) != ENC_TYPE_NONE && preshared_key == NULL )
+    /*At this point, we only want open APs*/
+    if( WiFi.encryptionType(i) != ENC_TYPE_NONE && preshared_key == no_preshared_key_found)
     {
       Serial.print("Skipping ");
       Serial.println(WiFi.SSID(i));
       continue;
     }
-    if( !preshared_key ) preshared_key = "";
 
     // We start by connecting to a WiFi network
     Serial.print("Connecting to ");
@@ -224,15 +222,23 @@ static unsigned long get_ntp_time() {
     udp.begin(localPort);
     Serial.println(udp.localPort());
 
-    unsigned long epoch = 0;
-    for( i = 0; i < 5 && !epoch; ++i )
+    for( i = 0; i < 5; ++i )
     {
       sendNTPpacket(udp, timeServerIP); // send an NTP packet to a time server
-      delay(200);    // wait to see if a reply is available
-      epoch = recvNTPpacket(udp);
+      for( unsigned j = 0; j < 4000; ++j )
+        {
+        delay(1);    // wait to see if a reply is available
+        unsigned long epoch = recvNTPpacket(udp);
+        if( epoch ) 
+          {
+            Serial.print("epoch:");
+            Serial.println(epoch);
+            WiFi.disconnect();
+            return epoch;
+          }
+        }
     }
     WiFi.disconnect();
-    if( epoch ) return epoch;
   }
 return 0;
 }
@@ -270,7 +276,7 @@ static const int SECONDS_IN_MINUTE = 60;
 static const int MINUTES_IN_HOUR = 60;
 
 // February is 28 here, but we will account for leap years further down.
-static int numDaysInMonths[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+static const int numDaysInMonths[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
 
 void dateFromNumberOfSeconds(
     uint32_t secs, uint32_t *year, uint32_t *month, uint32_t *day,
@@ -429,20 +435,20 @@ uint32_t numberOfLeapSecondsInYear(uint32_t year, bool skipDecember)
     // and 12/31 leap second, respectively, beginning from 1972.
     // NOTE: update this whenever IERS announces a new leap second. No, it's 
     //       not optimal.
-    static uint32_t leapSecondAdds[] = {
+    static const uint32_t leapSecondAdds[] = {
         0xD5552A21, // 1972-1988
         0x14A92400, // 1989-2005
         0x04082000, // 2006-2022
         0x00000000  // 2023-2039
     };
-    static uint32_t leapSecondDeletes[] = {
+    static const uint32_t leapSecondDeletes[] = {
         0x00000000, // 1972-1988
         0x00000000, // 1989-2005
         0x00000000, // 2006-2022
         0x00000000  // 2023-2039
     };
     
-    const int numBitsPerEntry = (sizeof(uint32_t) * 8);
+    static const int numBitsPerEntry = (sizeof(uint32_t) * 8);
     uint32_t yearDiff = year - LEAP_SECOND_YEAR;
     uint32_t leapSecondAddEntry = leapSecondAdds[(2*yearDiff) / numBitsPerEntry];
     uint32_t leapSecondDeleteEntry = leapSecondDeletes[(2*yearDiff) / numBitsPerEntry];
@@ -458,7 +464,7 @@ uint32_t numberOfLeapSecondsInYear(uint32_t year, bool skipDecember)
 
 void loop()
 {
-unsigned long ntp_time = get_ntp_time();
+unsigned long ntp_time = 0;
 display.clearDisplay();
 display.setTextSize(1);
 display.setTextColor(WHITE);
@@ -468,37 +474,31 @@ display.println("********Coffee!******");
 display.println("*********************");
 display.println("");
 Serial.println("Fresh Coffee!");
+
+while(!ntp_time) ntp_time = get_ntp_time();
+
 display.setTextSize(2);
-if( ntp_time )
-  {
-  unsigned long local_time = ntp_time - chicago_offset;
-  uint32_t year, month, day, hour, minute, second;
-  dateFromNumberOfSeconds
-    (
-    local_time,
-    &year,
-    &month,
-    &day,
-    &hour,
-    &minute,
-    &second
-    );
+unsigned long local_time = ntp_time - chicago_offset;
+uint32_t year, month, day, hour, minute, second;
+dateFromNumberOfSeconds
+  (
+  local_time,
+  &year,
+  &month,
+  &day,
+  &hour,
+  &minute,
+  &second
+  );
 
-  padform(year);  display.print("/");
-  padform(day);   display.print("/");
-  padform(month); display.println("");
+padform(year);  display.print("/");
+padform(day);   display.print("/");
+padform(month); display.println("");
 
-  padform(hour);  display.print(":");
-  padform(minute);display.print(":");
-  padform(second);display.println("");
+padform(hour);  display.print(":");
+padform(minute);display.print(":");
+padform(second);display.println("");
 
-  //delay(4000);//NIST requires this
-  }
-else
-  {
-  display.println("ERROR!");
-  }
-display.display();
 ESP.deepSleep(60000000, WAKE_RF_DEFAULT); // Sleep for 60 seconds
 }
 
